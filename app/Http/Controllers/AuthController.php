@@ -7,6 +7,8 @@ use Illuminate\Http\Request;
 use Illuminate\Http\JsonResponse;
 use Illuminate\Support\Facades\Hash;
 use Illuminate\Support\Facades\Validator;
+use Illuminate\Support\Facades\DB;
+use Illuminate\Support\Str;
 use Tymon\JWTAuth\Facades\JWTAuth;
 use Tymon\JWTAuth\Exceptions\JWTException;
 
@@ -38,16 +40,17 @@ class AuthController extends Controller
                 'password' => Hash::make($request->password),
             ]);
 
-            $token = JWTAuth::fromUser($user);
+            // Send email verification and get token
+            $verificationToken = $this->sendEmailVerification($user);
 
             return response()->json([
                 'success' => true,
-                'message' => 'User registered successfully',
+                'message' => 'User registered successfully. Please verify your email using the token provided.',
                 'data' => [
                     'user' => $user,
-                    'token' => $token,
-                    'token_type' => 'bearer',
-                    'expires_in' => config('jwt.ttl') * 60
+                    'email_verification_required' => true,
+                    'verification_token' => $verificationToken,
+                    'verification_url' => url("/api/auth/verify-email?token={$verificationToken}&email=" . urlencode($user->email))
                 ]
             ], 201);
 
@@ -89,6 +92,18 @@ class AuthController extends Controller
             }
 
             $user = auth()->user();
+
+            // Check if email is verified
+            if (!$user->hasVerifiedEmail()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Please verify your email address before logging in.',
+                    'data' => [
+                        'email_verification_required' => true,
+                        'user_id' => $user->id
+                    ]
+                ], 403);
+            }
 
             return response()->json([
                 'success' => true,
@@ -190,6 +205,145 @@ class AuthController extends Controller
             return response()->json([
                 'success' => false,
                 'message' => 'Failed to refresh token',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Send email verification
+     */
+    private function sendEmailVerification(User $user): string
+    {
+        $token = Str::random(64);
+        
+        // Store verification token
+        DB::table('email_verification_tokens')->updateOrInsert(
+            ['email' => $user->email],
+            [
+                'email' => $user->email,
+                'token' => $token,
+                'created_at' => now()
+            ]
+        );
+
+        // In a real application, you would send an email here
+        // For now, we'll just log the verification URL
+        $verificationUrl = url("/api/auth/verify-email?token={$token}&email=" . urlencode($user->email));
+        \Log::info("Email verification URL for {$user->email}: {$verificationUrl}");
+        
+        return $token;
+    }
+
+    /**
+     * Verify email address
+     */
+    public function verifyEmail(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'token' => 'required|string',
+                'email' => 'required|email',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $token = $request->token;
+            $email = urldecode($request->email); // Decode URL-encoded email
+
+            // Check if token exists and is valid
+            $verificationToken = DB::table('email_verification_tokens')
+                ->where('email', $email)
+                ->where('token', $token)
+                ->where('created_at', '>', now()->subHours(24)) // Token expires in 24 hours
+                ->first();
+
+            if (!$verificationToken) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Invalid or expired verification token'
+                ], 400);
+            }
+
+            // Find user and mark email as verified
+            $user = User::where('email', $email)->first();
+            if (!$user) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'User not found'
+                ], 404);
+            }
+
+            $user->markEmailAsVerified();
+
+            // Delete the verification token
+            DB::table('email_verification_tokens')
+                ->where('email', $email)
+                ->delete();
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Email verified successfully',
+                'data' => [
+                    'user' => $user,
+                    'email_verified_at' => $user->email_verified_at
+                ]
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Email verification failed',
+                'error' => $e->getMessage()
+            ], 500);
+        }
+    }
+
+    /**
+     * Resend email verification
+     */
+    public function resendVerification(Request $request): JsonResponse
+    {
+        try {
+            $validator = Validator::make($request->all(), [
+                'email' => 'required|email|exists:users,email',
+            ]);
+
+            if ($validator->fails()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Validation failed',
+                    'errors' => $validator->errors()
+                ], 422);
+            }
+
+            $user = User::where('email', $request->email)->first();
+
+            if ($user->hasVerifiedEmail()) {
+                return response()->json([
+                    'success' => false,
+                    'message' => 'Email is already verified'
+                ], 400);
+            }
+
+            // Send verification email
+            $this->sendEmailVerification($user);
+
+            return response()->json([
+                'success' => true,
+                'message' => 'Verification email sent successfully'
+            ]);
+
+        } catch (\Exception $e) {
+            return response()->json([
+                'success' => false,
+                'message' => 'Failed to send verification email',
                 'error' => $e->getMessage()
             ], 500);
         }

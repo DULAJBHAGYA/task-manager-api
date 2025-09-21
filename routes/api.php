@@ -21,6 +21,8 @@ use App\Http\Controllers\AuthController;
 Route::prefix('auth')->group(function () {
     Route::post('/register', [AuthController::class, 'register']);
     Route::post('/login', [AuthController::class, 'login']);
+    Route::get('/verify-email', [AuthController::class, 'verifyEmail']);
+    Route::post('/resend-verification', [AuthController::class, 'resendVerification']);
 });
 
 // Protected Routes (require JWT authentication)
@@ -58,8 +60,10 @@ Route::get('/dashboard', function () {
         'message' => 'BW Media Task Management Platform API with JWT Authentication',
         'version' => '2.0.0',
         'authentication' => [
-            'POST /api/auth/register' => 'Register a new user',
-            'POST /api/auth/login' => 'Login user and get JWT token',
+            'POST /api/auth/register' => 'Register a new user (requires email verification)',
+            'POST /api/auth/login' => 'Login user and get JWT token (requires verified email)',
+            'GET /api/auth/verify-email' => 'Verify email address with token',
+            'POST /api/auth/resend-verification' => 'Resend email verification',
             'GET /api/user' => 'Get authenticated user (requires Bearer token)',
             'POST /api/auth/logout' => 'Logout user (requires Bearer token)',
             'POST /api/auth/refresh' => 'Refresh JWT token (requires Bearer token)',
