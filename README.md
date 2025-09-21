@@ -74,6 +74,27 @@ The API will be available at `http://localhost:8000/api` for all endpoints.
 - **`high`** - High priority tasks
 - **`urgent`** - Urgent tasks requiring immediate attention
 
+## Email Verification
+
+The API requires **email verification** before users can login:
+
+### Registration Process
+1. **Register**: User provides name, email, and password
+2. **Verification Required**: System sends verification email (logged to Laravel log)
+3. **Verify Email**: User clicks verification link or uses API endpoint
+4. **Login**: User can now login with verified email
+
+### Verification Methods
+- **Email Link**: Check `storage/logs/laravel.log` for verification URL
+- **API Endpoint**: `GET /api/auth/verify-email?token={token}&email={email}`
+- **Resend**: `POST /api/auth/resend-verification` if needed
+
+### Security Features
+- **24-hour token expiry** for verification links
+- **One-time use tokens** (deleted after verification)
+- **URL encoding support** for email addresses
+- **Login blocked** until email is verified
+
 ## Task Types
 
 The system supports **two types of task creation**:
@@ -112,28 +133,37 @@ The system supports **two types of task creation**:
 
 ## API Endpoints
 
+### Authentication
+- `POST /api/auth/register` - Register a new user (requires email verification)
+- `POST /api/auth/login` - Login user and get JWT token (requires verified email)
+- `GET /api/auth/verify-email` - Verify email address with token
+- `POST /api/auth/resend-verification` - Resend email verification
+- `GET /api/user` - Get authenticated user (requires Bearer token)
+- `POST /api/auth/logout` - Logout user (requires Bearer token)
+- `POST /api/auth/refresh` - Refresh JWT token (requires Bearer token)
+
 ### Projects
-- `GET /api/projects` - List all projects
-- `POST /api/projects` - Create a new project
-- `GET /api/projects/{id}` - Get a specific project
-- `PUT /api/projects/{id}` - Update a project
-- `DELETE /api/projects/{id}` - Delete a project
-- `GET /api/projects/statistics` - Get project statistics
+- `GET /api/projects` - List all projects (requires Bearer token)
+- `POST /api/projects` - Create a new project (requires Bearer token)
+- `GET /api/projects/{id}` - Get a specific project (requires Bearer token)
+- `PUT /api/projects/{id}` - Update a project (requires Bearer token)
+- `DELETE /api/projects/{id}` - Delete a project (requires Bearer token)
+- `GET /api/projects/statistics` - Get project statistics (requires Bearer token)
 
 ### Tasks
-- `GET /api/tasks` - List all tasks
-- `POST /api/tasks` - Create a new task
-- `GET /api/tasks/{id}` - Get a specific task
-- `PUT /api/tasks/{id}` - Update a task
-- `DELETE /api/tasks/{id}` - Delete a task
-- `GET /api/tasks/statistics` - Get task statistics
+- `GET /api/tasks` - List all tasks (requires Bearer token)
+- `POST /api/tasks` - Create a new task (requires Bearer token)
+- `GET /api/tasks/{id}` - Get a specific task (requires Bearer token)
+- `PUT /api/tasks/{id}` - Update a task (requires Bearer token)
+- `DELETE /api/tasks/{id}` - Delete a task (requires Bearer token)
+- `GET /api/tasks/statistics` - Get task statistics (requires Bearer token)
 
 ## API Usage Examples
 
 ### Authentication
 ```bash
-# Register a new user
-POST /api/register
+# Register a new user (requires email verification)
+POST /api/auth/register
 {
     "name": "John Doe",
     "email": "john@example.com",
@@ -141,8 +171,17 @@ POST /api/register
     "password_confirmation": "password123"
 }
 
-# Login
-POST /api/login
+# Verify email address (check Laravel log for verification URL)
+GET /api/auth/verify-email?token={verification_token}&email=john@example.com
+
+# Resend verification email
+POST /api/auth/resend-verification
+{
+    "email": "john@example.com"
+}
+
+# Login (requires verified email)
+POST /api/auth/login
 {
     "email": "john@example.com",
     "password": "password123"

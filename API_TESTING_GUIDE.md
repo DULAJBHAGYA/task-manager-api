@@ -27,20 +27,24 @@ This document provides comprehensive testing instructions for the Task Manager A
 ```json
 {
     "success": true,
-    "message": "User registered successfully",
+    "message": "User registered successfully. Please check your email to verify your account.",
     "data": {
         "user": {
             "id": 1,
             "name": "John Doe",
             "email": "john@example.com",
+            "email_verified_at": null,
             "created_at": "2025-09-21T03:00:00.000000Z",
             "updated_at": "2025-09-21T03:00:00.000000Z"
         },
-        "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
-        "token_type": "bearer",
-        "expires_in": 3600
+        "email_verification_required": true
     }
 }
+```
+
+**Note:** After registration, check the Laravel log for the verification URL:
+```bash
+tail -1 storage/logs/laravel.log
 ```
 
 ### 2. Login User
@@ -54,7 +58,7 @@ This document provides comprehensive testing instructions for the Task Manager A
 }
 ```
 
-**Response (200):**
+**Response (200) - Verified User:**
 ```json
 {
     "success": true,
@@ -63,7 +67,8 @@ This document provides comprehensive testing instructions for the Task Manager A
         "user": {
             "id": 1,
             "name": "John Doe",
-            "email": "john@example.com"
+            "email": "john@example.com",
+            "email_verified_at": "2025-09-21T03:00:00.000000Z"
         },
         "token": "eyJ0eXAiOiJKV1QiLCJhbGciOiJIUzI1NiJ9...",
         "token_type": "bearer",
@@ -72,7 +77,81 @@ This document provides comprehensive testing instructions for the Task Manager A
 }
 ```
 
-### 3. Get Authenticated User
+**Response (403) - Unverified User:**
+```json
+{
+    "success": false,
+    "message": "Please verify your email address before logging in.",
+    "data": {
+        "email_verification_required": true,
+        "user_id": 1
+    }
+}
+```
+
+### 3. Verify Email Address
+**GET** `/auth/verify-email`
+
+**Query Parameters:**
+- `token`: Verification token from email
+- `email`: User's email address
+
+**Example:** `GET /auth/verify-email?token=ABC123...&email=john@example.com`
+
+**Response (200):**
+```json
+{
+    "success": true,
+    "message": "Email verified successfully",
+    "data": {
+        "user": {
+            "id": 1,
+            "name": "John Doe",
+            "email": "john@example.com",
+            "email_verified_at": "2025-09-21T03:00:00.000000Z",
+            "created_at": "2025-09-21T03:00:00.000000Z",
+            "updated_at": "2025-09-21T03:00:00.000000Z"
+        },
+        "email_verified_at": "2025-09-21T03:00:00.000000Z"
+    }
+}
+```
+
+**Response (400) - Invalid Token:**
+```json
+{
+    "success": false,
+    "message": "Invalid or expired verification token"
+}
+```
+
+### 4. Resend Verification Email
+**POST** `/auth/resend-verification`
+
+**Request Body:**
+```json
+{
+    "email": "john@example.com"
+}
+```
+
+**Response (200):**
+```json
+{
+    "success": true,
+    "message": "Verification email sent successfully"
+}
+```
+
+**Response (400) - Already Verified:**
+```json
+{
+    "success": false,
+    "message": "Email is already verified"
+}
+```
+
+### 5. Get Authenticated User
 **GET** `/user`  
 **Headers:** `Authorization: Bearer {token}`
 
@@ -83,13 +162,14 @@ This document provides comprehensive testing instructions for the Task Manager A
     "data": {
         "id": 1,
         "name": "John Doe",
-        "email": "john@example.com"
+        "email": "john@example.com",
+        "email_verified_at": "2025-09-21T03:00:00.000000Z"
     },
     "message": "User data retrieved successfully"
 }
 ```
 
-### 4. Logout User
+### 6. Logout User
 **POST** `/auth/logout`  
 **Headers:** `Authorization: Bearer {token}`
 
@@ -101,7 +181,7 @@ This document provides comprehensive testing instructions for the Task Manager A
 }
 ```
 
-### 5. Refresh Token
+### 7. Refresh Token
 **POST** `/auth/refresh`  
 **Headers:** `Authorization: Bearer {token}`
 
@@ -554,8 +634,10 @@ This document provides comprehensive testing instructions for the Task Manager A
     "message": "BW Media Task Management Platform API with JWT Authentication",
     "version": "2.0.0",
     "authentication": {
-        "POST /api/auth/register": "Register a new user",
-        "POST /api/auth/login": "Login user and get JWT token",
+        "POST /api/auth/register": "Register a new user (requires email verification)",
+        "POST /api/auth/login": "Login user and get JWT token (requires verified email)",
+        "GET /api/auth/verify-email": "Verify email address with token",
+        "POST /api/auth/resend-verification": "Resend email verification",
         "GET /api/user": "Get authenticated user (requires Bearer token)",
         "POST /api/auth/logout": "Logout user (requires Bearer token)",
         "POST /api/auth/refresh": "Refresh JWT token (requires Bearer token)"
@@ -633,14 +715,18 @@ This document provides comprehensive testing instructions for the Task Manager A
 2. Open Postman or similar API testing tool
 3. Set base URL: `http://localhost:8000/api`
 
-### Step 2: User Registration & Authentication
+### Step 2: User Registration & Email Verification
 1. **Register User 1**
    - POST `/auth/register`
-   - Save the token from response
+   - Check Laravel log for verification URL: `tail -1 storage/logs/laravel.log`
+   - GET `/auth/verify-email` with token and email
+   - POST `/auth/login` to get JWT token
    
 2. **Register User 2**
    - POST `/auth/register` with different email
-   - Save the token from response
+   - Check Laravel log for verification URL
+   - GET `/auth/verify-email` with token and email
+   - POST `/auth/login` to get JWT token
 
 ### Step 3: Test User Isolation
 1. **Login as User 1**
