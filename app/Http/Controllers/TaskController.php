@@ -16,14 +16,25 @@ class TaskController extends Controller
     public function index(Request $request): JsonResponse
     {
         $userId = auth()->id();
-        $query = Task::with(['project', 'assignedUser'])
-            ->whereHas('project', function ($q) use ($userId) {
-                $q->where('user_id', $userId);
+        
+        // Get tasks that either:
+        // 1. Belong to projects owned by the user, OR
+        // 2. Are standalone tasks owned by the user
+        $query = Task::with(['project', 'assignedUser', 'user'])
+            ->where(function ($q) use ($userId) {
+                $q->whereHas('project', function ($subQ) use ($userId) {
+                    $subQ->where('user_id', $userId);
+                })
+                ->orWhere('user_id', $userId); // Standalone tasks owned by the user
             });
 
         // Filter by project if provided
         if ($request->has('project_id')) {
-            $query->where('project_id', $request->project_id);
+            if ($request->project_id === 'standalone') {
+                $query->whereNull('project_id');
+            } else {
+                $query->where('project_id', $request->project_id);
+            }
         }
 
         // Filter by status if provided
@@ -66,7 +77,7 @@ class TaskController extends Controller
     {
         try {
             $validated = $request->validate([
-                'project_id' => 'required|exists:projects,id',
+                'project_id' => 'nullable|exists:projects,id',
                 'title' => 'required|string|max:255',
                 'description' => 'nullable|string',
                 'status' => 'in:pending,in_progress,completed',
@@ -75,17 +86,23 @@ class TaskController extends Controller
                 'due_date' => 'nullable|date|after_or_equal:today',
             ]);
 
-            // Verify project belongs to authenticated user
             $userId = auth()->id();
-            $project = Project::where('id', $validated['project_id'])
-                ->where('user_id', $userId)
-                ->first();
-            
-            if (!$project) {
-                return response()->json([
-                    'success' => false,
-                    'message' => 'Project not found or access denied'
-                ], 404);
+
+            // If project_id is provided, verify it belongs to the authenticated user
+            if (isset($validated['project_id'])) {
+                $project = Project::where('id', $validated['project_id'])
+                    ->where('user_id', $userId)
+                    ->first();
+                
+                if (!$project) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Project not found or access denied'
+                    ], 404);
+                }
+            } else {
+                // For standalone tasks, set the user_id
+                $validated['user_id'] = $userId;
             }
 
             $task = Task::create($validated);
@@ -93,7 +110,7 @@ class TaskController extends Controller
             return response()->json([
                 'success' => true,
                 'data' => $task->load(['project', 'assignedUser']),
-                'message' => 'Task created successfully'
+                'message' => $task->hasProject() ? 'Project task created successfully' : 'Standalone task created successfully'
             ], 201);
 
         } catch (ValidationException $e) {
@@ -118,9 +135,12 @@ class TaskController extends Controller
     {
         try {
             $userId = auth()->id();
-            $task = Task::with(['project', 'assignedUser'])
-                ->whereHas('project', function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
+            $task = Task::with(['project', 'assignedUser', 'user'])
+                ->where(function ($q) use ($userId) {
+                    $q->whereHas('project', function ($subQ) use ($userId) {
+                        $subQ->where('user_id', $userId);
+                    })
+                    ->orWhere('user_id', $userId);
                 })
                 ->findOrFail($id);
 
@@ -146,12 +166,15 @@ class TaskController extends Controller
     {
         try {
             $userId = auth()->id();
-            $task = Task::whereHas('project', function ($q) use ($userId) {
-                $q->where('user_id', $userId);
+            $task = Task::where(function ($q) use ($userId) {
+                $q->whereHas('project', function ($subQ) use ($userId) {
+                    $subQ->where('user_id', $userId);
+                })
+                ->orWhere('user_id', $userId);
             })->findOrFail($id);
 
             $validated = $request->validate([
-                'project_id' => 'sometimes|exists:projects,id',
+                'project_id' => 'sometimes|nullable|exists:projects,id',
                 'title' => 'sometimes|string|max:255',
                 'description' => 'nullable|string',
                 'status' => 'sometimes|in:pending,in_progress,completed',
@@ -159,6 +182,20 @@ class TaskController extends Controller
                 'assigned_to' => 'nullable|exists:users,id',
                 'due_date' => 'nullable|date',
             ]);
+
+            // If project_id is being changed, verify it belongs to the user
+            if (isset($validated['project_id']) && $validated['project_id']) {
+                $project = Project::where('id', $validated['project_id'])
+                    ->where('user_id', $userId)
+                    ->first();
+                
+                if (!$project) {
+                    return response()->json([
+                        'success' => false,
+                        'message' => 'Project not found or access denied'
+                    ], 404);
+                }
+            }
 
             // Set completed_at when status is changed to completed
             if (isset($validated['status']) && $validated['status'] === 'completed' && $task->status !== 'completed') {
@@ -169,7 +206,7 @@ class TaskController extends Controller
 
             return response()->json([
                 'success' => true,
-                'data' => $task->load(['project', 'assignedUser']),
+                'data' => $task->load(['project', 'assignedUser', 'user']),
                 'message' => 'Task updated successfully'
             ]);
 
@@ -195,8 +232,11 @@ class TaskController extends Controller
     {
         try {
             $userId = auth()->id();
-            $task = Task::whereHas('project', function ($q) use ($userId) {
-                $q->where('user_id', $userId);
+            $task = Task::where(function ($q) use ($userId) {
+                $q->whereHas('project', function ($subQ) use ($userId) {
+                    $subQ->where('user_id', $userId);
+                })
+                ->orWhere('user_id', $userId);
             })->findOrFail($id);
             $task->delete();
 
@@ -221,24 +261,26 @@ class TaskController extends Controller
     {
         try {
             $userId = auth()->id();
+            
+            // Base query for all user's tasks (both project and standalone)
+            $baseQuery = Task::where(function ($q) use ($userId) {
+                $q->whereHas('project', function ($subQ) use ($userId) {
+                    $subQ->where('user_id', $userId);
+                })
+                ->orWhere('user_id', $userId);
+            });
+
             $stats = [
-                'total_tasks' => Task::whereHas('project', function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
-                })->count(),
-                'pending_tasks' => Task::whereHas('project', function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
-                })->where('status', 'pending')->count(),
-                'in_progress_tasks' => Task::whereHas('project', function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
-                })->where('status', 'in_progress')->count(),
-                'completed_tasks' => Task::whereHas('project', function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
-                })->where('status', 'completed')->count(),
-                'overdue_tasks' => Task::whereHas('project', function ($q) use ($userId) {
-                    $q->where('user_id', $userId);
-                })->where('due_date', '<', now()->toDateString())
+                'total_tasks' => $baseQuery->count(),
+                'pending_tasks' => $baseQuery->clone()->where('status', 'pending')->count(),
+                'in_progress_tasks' => $baseQuery->clone()->where('status', 'in_progress')->count(),
+                'completed_tasks' => $baseQuery->clone()->where('status', 'completed')->count(),
+                'overdue_tasks' => $baseQuery->clone()
+                    ->where('due_date', '<', now()->toDateString())
                     ->where('status', '!=', 'completed')
                     ->count(),
+                'project_tasks' => $baseQuery->clone()->whereNotNull('project_id')->count(),
+                'standalone_tasks' => $baseQuery->clone()->whereNull('project_id')->count(),
             ];
 
             return response()->json([

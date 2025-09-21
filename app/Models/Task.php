@@ -8,6 +8,7 @@ use Illuminate\Database\Eloquent\Relations\BelongsTo;
 class Task extends Model
 {
     protected $fillable = [
+        'user_id',
         'project_id',
         'title',
         'description',
@@ -26,6 +27,27 @@ class Task extends Model
     public function project(): BelongsTo
     {
         return $this->belongsTo(Project::class);
+    }
+
+    /**
+     * Check if task belongs to a project
+     */
+    public function hasProject(): bool
+    {
+        return !is_null($this->project_id);
+    }
+
+    /**
+     * Check if task is a standalone task (not part of any project)
+     */
+    public function isStandalone(): bool
+    {
+        return is_null($this->project_id);
+    }
+
+    public function user(): BelongsTo
+    {
+        return $this->belongsTo(User::class);
     }
 
     public function assignedUser(): BelongsTo
