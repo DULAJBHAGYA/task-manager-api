@@ -57,6 +57,7 @@ class ProjectSeeder extends Seeder
         ];
 
         foreach ($projects as $project) {
+            $project['user_id'] = 1; // Assign to user ID 1
             Project::create($project);
         }
     }

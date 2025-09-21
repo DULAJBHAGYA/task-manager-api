@@ -160,6 +160,7 @@ class TaskSeeder extends Seeder
         ];
 
         foreach ($tasks as $task) {
+            $task['user_id'] = 1; // Assign to user ID 1
             Task::create($task);
         }
     }
